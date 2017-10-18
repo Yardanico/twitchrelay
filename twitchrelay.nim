@@ -42,7 +42,9 @@ let
   twitchNick = cfg["twitch_nick"]
   twitchChan = cfg["twitch_chan"]
   twitchToken = cfg["twitch_token"]
-
+  # For message logging
+  twitchDescr = twitchChan & " on Twitch"
+  
   serverNick = cfg["server_nick"]
   serverChan = cfg["server_chan"]
 
@@ -52,38 +54,38 @@ let
 
 template onEvent(name, ircClient, ircChan): untyped {.dirty.} = 
   proc name(client: AsyncIrc, event: IrcEvent) {.async.} = 
-    # If event type is not IRC message or event command is not PRIVMSG
     if event.typ != EvMsg:
       return
-    # Twitch authentication failed
+    
+    # Check if Twitch authentication failed
     elif event.cmd == MNotice and "Improperly" in event.params[1]:
       echo "Twitch authentication failed!"
       quit(1)
-    # If this event is not a PRIVMSG, return
+
     elif event.cmd != MPrivMsg: return
+    
     # I don't know if this can happen, but who knows :)
     if event.params.len < 2: return
 
-    let (nick, msg) = (event.nick, event.params[1])
-    # Message to send
-    let toSend = "<$1> $2" % [nick, msg]
-    # If we need to log messages
+    # Message to send: "<nickname> message"
+    let toSend = "<$1> $2" % [event.nick, event.params[1]]
     if log:
-      # Check if it's twitch (we check if twitch channel is in first event param)
+      # Check if it's from Twitch
+      # We check if Twitch channel name is in first event param
       let isTwitch = twitchChan in event.params[0]
       echo "Sending `$1` to $2" % [
-        toSend, if isTwitch: "the IRC channel" else: "Twitch"
+        toSend, if isTwitch: serverChan else: twitchDescr
       ]
     # Send message to another IRC client:
-    # Twitch sends to server, server sends to twitch
+    # Twitch sends to the server, server sends to Twitch
     await ircClient.privmsg(ircChan, toSend)
 
 # We need to forward declare these
 proc onChanEvent(client: AsyncIrc, event: IrcEvent) {.async.}
 proc onTwitchEvent(client: AsyncIrc, event: IrcEvent) {.async.}
 
-# Yeah, globals are probably bad, but I can't find 
-# a way to do it without globals
+# Yeah, globals are probably bad, but 
+# I can't find another way to do it without globals
 var twitchClient = newAsyncIrc(
   address = TwitchAddr, port = IrcPort, nick = twitchNick,
   serverPass = twitchToken, joinChans = @[twitchChan], 
