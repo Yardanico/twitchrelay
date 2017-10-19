@@ -6,8 +6,6 @@ const
 
   TwitchAddr = "irc.chat.twitch.tv"
 
-  ServerAddr = "irc.freenode.net"
-
   # Configuration template
   ConfigTemplate = """
     twitch_nick = "nick"
@@ -19,73 +17,80 @@ const
     # You can get this token here - http://www.twitchapps.com/tmi/
     twitch_token = "token"
 
-    server_nick = "FromTwitch"
+    server_addr = "irc.freenode.net"
     server_chan = "#nim"
-
+    server_nick = "FromTwitch"
+    
     # Should we log all messages to the terminal?
     log = true
   """.unindent
 
-  ConfigFilename = "twitchrelay.ini"
+  CfgPath = "twitchrelay.ini"
 
-if not fileExists(ConfigFilename):
-  var f = open(ConfigFilename, fmWrite)
-  f.write(ConfigTemplate)
-  f.close()
-  echo "No config file was found, `twitchrelay.ini` was created in the current dir!"
+if not fileExists(CfgPath):
+  writeFile(CfgPath, ConfigTemplate)
+  echo "No config file was found, `$1` was created in the current dir!" % CfgPath
   quit(1)
 
 let
-  # Load config and choose empty section (we don't have them in our config)
-  cfg = loadConfig(ConfigFilename)[""]
+  # Load config and choose empty section
+  cfg = loadConfig(CfgPath)[""]
 
   twitchNick = cfg["twitch_nick"]
   twitchChan = cfg["twitch_chan"]
   twitchToken = cfg["twitch_token"]
+
   # For message logging
   twitchDescr = twitchChan & " on Twitch"
   
-  serverNick = cfg["server_nick"]
+  serverAddr = cfg["server_addr"]
   serverChan = cfg["server_chan"]
-
+  serverNick = cfg["server_nick"]
+  
   log = cfg["log"].parseBool()
-
-
 
 template onEvent(name, ircClient, ircChan): untyped {.dirty.} = 
   proc name(client: AsyncIrc, event: IrcEvent) {.async.} = 
-    if event.typ != EvMsg:
+    let isTwitch = twitchChan in event.params[0]
+
+    if event.typ != EvMsg or event.params.len < 2:
       return
     
     # Check if Twitch authentication failed
     elif event.cmd == MNotice and "Improperly" in event.params[1]:
       echo "Twitch authentication failed!"
       quit(1)
-
-    elif event.cmd != MPrivMsg: return
     
-    # I don't know if this can happen, but who knows :)
-    if event.params.len < 2: return
+    # If it's not a PRIVMSG or it's not sent from the channel
+    elif event.cmd != MPrivMsg or event.params[0][0] != '#': return
 
-    # Message to send: "<nickname> message"
-    let toSend = "<$1> $2" % [event.nick, event.params[1]]
+    var (nick, msg) = (event.nick, event.params[1])
+    # Special case for the Gitter <-> IRC bridge
+    if nick == "FromGitter":
+      let data = msg.split(">", 1)
+      # Probably can't happen
+      if data.len != 2: return
+      # Nick would be like "nickname from Gitter", message is not changed
+      (nick, msg) = (data[0][2..^1] & " from Gitter", data[1].strip())
+      
+    let toSend = "<$1> $2" % [nick, msg]
+
     if log:
       # Check if it's from Twitch
-      # We check if Twitch channel name is in first event param
-      let isTwitch = twitchChan in event.params[0]
+      # We check if Twitch channel name is in the first event parameter
+      
       echo "Sending `$1` to $2" % [
         toSend, if isTwitch: serverChan else: twitchDescr
       ]
-    # Send message to another IRC client:
-    # Twitch sends to the server, server sends to Twitch
-    await ircClient.privmsg(ircChan, toSend)
+    # Send message to another IRC server
+    # Twitch to IRC, IRC to Twitch
+    asyncCheck ircClient.privmsg(ircChan, toSend)
 
 # We need to forward declare these
 proc onChanEvent(client: AsyncIrc, event: IrcEvent) {.async.}
 proc onTwitchEvent(client: AsyncIrc, event: IrcEvent) {.async.}
 
-# Yeah, globals are probably bad, but 
-# I can't find another way to do it without globals
+# I can't find a way to do it without globals
 var twitchClient = newAsyncIrc(
   address = TwitchAddr, port = IrcPort, nick = twitchNick,
   serverPass = twitchToken, joinChans = @[twitchChan], 
@@ -93,7 +98,7 @@ var twitchClient = newAsyncIrc(
 )
 
 var chanClient = newAsyncIrc(
-  address = ServerAddr, port = IrcPort, nick = serverNick, 
+  address = serverAddr, port = IrcPort, nick = serverNick, 
   joinChans = @[serverChan], callback = onChanEvent
 )
 
@@ -112,8 +117,6 @@ proc main() {.async.} =
 
 proc hook() {.noconv.} = 
   echo "Disabling TwitchRelay..."
-  # Yes, we don't gracefully close connections to IRC here, 
-  # because .close() can sometimes throw an error (especially with async)
   quit(0)
 
 setControlCHook(hook)
