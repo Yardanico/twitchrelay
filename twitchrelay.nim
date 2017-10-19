@@ -63,15 +63,22 @@ template onEvent(name, ircClient, ircChan): untyped {.dirty.} =
     
     # If it's not a PRIVMSG or it's not sent from the channel
     elif event.cmd != MPrivMsg or event.params[0][0] != '#': return
-
+    
     var (nick, msg) = (event.nick, event.params[1])
+
+    # Replace some special chars or strings
+    msg = msg.multiReplace({
+      "ACTION": "", 
+      "\n": "↵", "\r": "↵", "\l": "↵", 
+      "\1": ""
+    })
+    
     # Special case for the Gitter <-> IRC bridge
     if nick == "FromGitter":
       let data = msg.split(">", 1)
       # Probably can't happen
       if data.len != 2: return
-      # Nick would be like "nickname from Gitter", message is not changed
-      (nick, msg) = (data[0][2..^1] & " from Gitter", data[1].strip())
+      (nick, msg) = (data[0][2..^1], data[1].strip())
       
     let toSend = "<$1> $2" % [nick, msg]
 
@@ -111,6 +118,7 @@ proc main() {.async.} =
   # and then let them run (almost) simultaneously 
   await twitchClient.connect()
   await chanClient.connect()
+  await sleepAsync(3000)
   asyncCheck twitchClient.run()
   asyncCheck chanClient.run()
   echo "Starting TwitchRelay (wait a few seconds)..."
