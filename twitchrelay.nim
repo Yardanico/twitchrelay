@@ -78,7 +78,7 @@ template onEvent(name, ircClient, ircChan): untyped {.dirty.} =
       let data = msg.split(">", 1)
       # Probably can't happen
       if data.len != 2: return
-      (nick, msg) = (data[0][2..^1], data[1].strip())
+      (nick, msg) = (data[0][1..^1], data[1].strip())
       
     let toSend = "<$1> $2" % [nick, msg]
 
